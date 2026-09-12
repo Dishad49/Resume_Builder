@@ -9,7 +9,7 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open `http://127.0.0.1:5000`. Paste a job description or upload its PDF, then upload the candidate resume PDFs. Use **Try demo data** for a no-files-required walkthrough.
+Open `http://127.0.0.1:5000`. Paste a job description or upload its PDF/DOCX file, then upload up to 25 candidate resumes as PDF or DOCX. Use **Try demo data** for a no-files-required walkthrough.
 
 ## How scoring works
 
@@ -22,6 +22,6 @@ The UI shows both component scores, matched evidence, and missing JD concepts. I
 
 ## Notes for the demo
 
-- PDFs must contain selectable text. Scanned PDFs require OCR before upload.
+- PDFs must contain selectable text. Scanned PDFs require OCR before upload. Modern `.docx` files are supported directly.
 - The provided event statement mentioned 18 organizer resumes, but those files were not available in the supplied Downloads folder. The multi-upload flow is ready for them.
 - Tailor `CONCEPTS` before the final demo if the provided JD uses specialist technologies not in the initial map.

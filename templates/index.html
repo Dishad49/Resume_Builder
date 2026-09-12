@@ -12,16 +12,16 @@
   <section id="setup" class="panel">
     <div class="section-head"><div><p class="eyebrow">01 — INPUT</p><h2>Build your shortlist</h2></div><button id="sample" class="secondary">Try demo data</button></div>
     <label for="jd">Job description</label><textarea id="jd" placeholder="Paste the job description here, or upload its PDF below..."></textarea>
-    <div class="file-row"><label class="drop"><input id="jdPdf" type="file" accept="application/pdf"><span>↑</span> Job description PDF <small>Optional</small></label><label class="drop"><input id="resumes" type="file" accept="application/pdf" multiple><span>↑</span> Resume PDFs <small>Upload 1–18 files</small></label></div>
-    <div id="fileStatus" class="file-status"></div><button id="rank" class="primary">Rank candidates <span>→</span></button><p id="error" class="error"></p>
+    <div class="file-row"><label class="drop"><input id="jdPdf" type="file" accept="application/pdf,.docx"><span>↑</span> Job description file <small>PDF or DOCX</small></label><label class="drop"><input id="resumes" type="file" accept="application/pdf,.docx" multiple><span>↑</span> Resume files <small>PDF or DOCX · up to 25</small></label></div>
+    <div id="fileStatus" class="file-status" aria-live="polite"></div><ul id="resumeList" class="resume-list" aria-label="Selected resumes"></ul><button id="rank" class="primary">Rank candidates <span>→</span></button><p id="error" class="error"></p>
   </section>
   <section id="results" hidden>
-    <div class="section-head"><div><p class="eyebrow">02 — RESULTS</p><h2>Ranked shortlist</h2></div><div class="legend"><i></i> Semantic context <b></b> Explicit skills</div></div>
+    <div class="section-head"><div><p class="eyebrow">02 — RESULTS</p><h2>Ranked shortlist</h2></div><div class="result-actions"><button id="export" class="secondary">Download CSV</button><div class="legend"><i></i> Semantic context <b></b> Explicit skills</div></div></div>
+    <div id="summary" class="summary" aria-live="polite"></div>
     <div id="top3" class="top3"></div>
     <div id="audit" class="audit" hidden></div>
     <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Candidate</th><th>Final fit</th><th>Score composition</th><th>Matched evidence</th></tr></thead><tbody id="ranking"></tbody></table></div>
-    <div class="method"><div><p class="eyebrow">AUDITABLE METHOD</p><h3>Every score can be defended.</h3></div><p><strong>55% semantic similarity</strong> — TF-IDF word/phrase and character n-gram cosine similarity handles contextual phrasing and minor formatting differences.<br><strong>45% keyword evidence</strong> — named JD concepts, normalized through a visible synonym map, plus literal JD terms. No LLM assigns scores.</p></div>
-    <div class="compare"><p class="eyebrow">RECRUITER QUESTION</p><h3>Why is one candidate above another?</h3><div><select id="candidateA"></select><select id="candidateB"></select><button id="compareBtn" class="secondary">Explain ranking</button></div><p id="comparison"></p></div>
+    <div class="compare"><p class="eyebrow">RECRUITER QUESTION</p><h3>Why is one candidate above another?</h3><div><select id="candidateA"></select><select id="candidateB"></select><button id="compareBtn" class="secondary">Explain ranking</button></div><div id="comparison" class="comparison" aria-live="polite"></div></div>
   </section>
 </main>
 <footer>InternLoom Smart Shortlisting Engine · Built for transparent campus hiring</footer>
