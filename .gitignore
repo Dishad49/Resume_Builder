@@ -1,3 +1,97 @@
-.venv/
+# =====================================================================
+# Byte-compiled / optimized / DLL files
+# =====================================================================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+
+# =====================================================================
+# Virtual Environments & Packaging
+# =====================================================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# =====================================================================
+# PyTorch, Hugging Face, Transformers & Machine Learning Caches
+# =====================================================================
+.cache/
+checkpoints/
+*.pt
+*.pth
+*.bin
+*.onnx
+models/
+model_cache/
+
+# =====================================================================
+# Environment Variables & Secrets
+# =====================================================================
+.env
+.env.*
+*.env
+!.env.example
+
+# =====================================================================
+# Flask & Web runtime
+# =====================================================================
+instance/
+.webassets-cache
+*.log
+
+# =====================================================================
+# Unit Tests & Coverage
+# =====================================================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# =====================================================================
+# IDEs, Editors & Operating System Metadata
+# =====================================================================
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.code-workspace
+
+# PyCharm / JetBrains
+.idea/
+*.iws
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary / Scratch files
+*.tmp
+*.temp
+scratch/

@@ -1,5 +1,21 @@
-Flask>=3.0
-pypdf>=5.0
-scikit-learn>=1.4
-sentence-transformers>=3.0
-torch>=2.2
+# =====================================================================
+# InternLoom / ResumeRanker Dependencies
+# =====================================================================
+
+# Core Web Framework
+Flask>=3.0.0
+
+# Document & PDF Extraction
+# (DOCX documents are extracted via Python standard library zipfile & xml.etree.ElementTree)
+pypdf>=5.0.0
+
+# Traditional ML & NLP (TF-IDF Vectorization, N-Gram Cosine Similarity)
+scikit-learn>=1.4.0
+scipy>=1.12.0
+numpy>=1.26.0
+
+# Dense Semantic Embeddings (Sentence Transformers & PyTorch)
+sentence-transformers>=3.0.0
+torch>=2.2.0
+transformers>=4.40.0
+huggingface-hub>=0.20.0
