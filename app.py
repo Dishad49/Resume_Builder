@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+import hashlib
 from collections import Counter
 from xml.etree import ElementTree
 
@@ -125,16 +126,19 @@ def semantic_scores(jd: str, resumes: list[str]) -> list[float]:
     return [100 * (0.72 * word + 0.28 * char) for word, char in zip(word_scores, char_scores)]
 
 
-def rank(jd: str, candidates: list[dict]) -> list[dict]:
+def rank(jd: str, candidates: list[dict], semantic_weight: float = 0.55, required: set[str] | None = None) -> list[dict]:
+    required = required or set()
+    semantic_weight = min(max(semantic_weight, 0.0), 1.0)
+    keyword_weight = 1 - semantic_weight
     sem = semantic_scores(jd, [c["text"] for c in candidates])
     results = []
     for candidate, semantic in zip(candidates, sem):
         keyword, matched, missing = keyword_score(jd, candidate["text"])
         # Explicit 55/45 hybrid weighting—both components are always retained.
-        final = 0.55 * semantic + 0.45 * keyword
+        final = semantic_weight * semantic + keyword_weight * keyword
         results.append({"name": candidate["name"], "score": round(final, 1), "semantic": round(semantic, 1),
                         "keyword": round(keyword, 1), "matched": matched, "missing": missing,
-                        "text": candidate["text"]})
+                        "required_missing": sorted(required - set(matched)), "text": candidate["text"]})
     results.sort(key=lambda x: x["score"], reverse=True)
     for i, result in enumerate(results, 1):
         result["rank"] = i
@@ -212,17 +216,32 @@ def api_rank():
     if len(uploaded_resumes) > MAX_RESUMES:
         return jsonify({"error": f"Upload at most {MAX_RESUMES} resumes at a time."}), 400
     candidates = []
+    seen_resumes = set()
+    duplicates_removed = []
     for file in uploaded_resumes:
         try:
             text = extract_document(file)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+        fingerprint = hashlib.sha256(plain(text).encode("utf-8")).hexdigest()
+        if fingerprint in seen_resumes:
+            duplicates_removed.append(file.filename)
+            continue
+        seen_resumes.add(fingerprint)
         candidates.append({"name": re.sub(r"\.(pdf|docx)$", "", file.filename, flags=re.I), "text": text})
     if not jd:
         return jsonify({"error": "Add a job description or upload its PDF."}), 400
     if not candidates:
         return jsonify({"error": "Upload at least one text-based resume PDF or DOCX file."}), 400
-    return jsonify({"jd": jd, "candidates": candidates, "results": rank(jd, candidates), "audit": audit_jd(jd)})
+    try:
+        semantic_weight = float(request.form.get("semantic_weight", 55)) / 100
+    except ValueError:
+        semantic_weight = 0.55
+    required = {plain(term) for term in request.form.get("required_skills", "").split(",") if plain(term)}
+    known_required = {concept for concept in CONCEPTS if concept in required}
+    return jsonify({"jd": jd, "candidates": candidates, "results": rank(jd, candidates, semantic_weight, known_required),
+                    "audit": audit_jd(jd), "weights": {"semantic": round(semantic_weight * 100), "keyword": round((1 - semantic_weight) * 100)},
+                    "required": sorted(known_required), "duplicates_removed": duplicates_removed})
 
 
 @app.post("/api/compare")
