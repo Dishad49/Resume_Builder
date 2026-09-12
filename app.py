@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 import zipfile
 import hashlib
+import threading
 from collections import Counter
 from xml.etree import ElementTree
 
@@ -27,11 +29,17 @@ CONCEPTS = {
     "python": ["python", "flask", "django", "fastapi"],
     "java": ["java", "spring", "spring boot"],
     "databases": ["database", "databases", "sql", "mysql", "postgresql", "mongodb", "mongo", "sqlite"],
-    "rest api": ["rest", "restful", "api", "apis", "endpoint", "endpoints", "graphql"],
+    "rest api": ["rest", "restful", "api", "apis", "endpoint", "endpoints", "graphql", "json"],
     "git": ["git", "github", "gitlab", "version control"],
     "html css": ["html", "css", "tailwind", "bootstrap", "responsive"],
-    "cloud": ["aws", "azure", "gcp", "cloud", "docker", "kubernetes"],
-    "testing": ["testing", "tests", "jest", "pytest", "unit test", "qa"],
+    # Docker / Containerization: Decoupled from "cloud" into its own concept.
+    # Reason: Structured JDs (such as TechNova) list "Cloud basics (AWS/GCP/Azure)" and
+    # "Docker / basic containerization" as separate items under "good-to-have". Separating them
+    # prevents Docker alone from falsely fulfilling cloud requirements, and allows granular,
+    # independent gap detection for container vs cloud infrastructure.
+    "cloud": ["aws", "azure", "gcp", "cloud"],
+    "containerization": ["docker", "kubernetes", "container", "containers", "containerization"],
+    "testing": ["testing", "tests", "jest", "mocha", "pytest", "unit test", "qa"],
     "agile": ["agile", "scrum", "sprint", "jira"],
     "communication": ["communication", "collaboration", "teamwork", "stakeholder"],
 }
@@ -95,27 +103,139 @@ def jd_keywords(jd: str) -> list[str]:
     return [term for term, _ in counts.most_common(24)]
 
 
-def keyword_score(jd: str, resume: str) -> tuple[float, list[str], list[str]]:
-    jd_concepts, cv_concepts = concepts_in(jd), concepts_in(resume)
-    concept_matches = sorted(jd_concepts & cv_concepts)
-    missing = sorted(jd_concepts - cv_concepts)
+def split_jd_sections(jd_text: str) -> dict[str, str]:
+    """Detects common section headers case-insensitively using regex and splits the JD text
+    into {'must_have': '...', 'good_to_have': '...', 'other': '...'}.
+    If no recognizable headers are found, puts the entire JD text into 'must_have' as safe fallback.
+    """
+    if not jd_text or not jd_text.strip():
+        return {"must_have": "", "good_to_have": "", "other": ""}
+
+    # 1. Match section headers at line boundaries (multiline mode)
+    header_pattern = re.compile(
+        r"(?m)^[ \t*#-_]*(?:"
+        r"(?P<must_have>must[\s-]have(?:\s+(?:skills?|requirements?|qualifications?))?|required(?:\s+(?:skills?|qualifications?|requirements?))?|core\s+skills?|minimum\s+qualifications?|basic\s+qualifications?)"
+        r"|(?P<good_to_have>good[\s-]to[\s-]have(?:\s+(?:skills?|requirements?|qualifications?))?|nice[\s-]to[\s-]have(?:\s+(?:skills?|requirements?|qualifications?))?|preferred(?:\s+(?:skills?|qualifications?|requirements?))?|desired(?:\s+skills?)?|bonus(?:\s+skills?)?|pluses?)"
+        r"|(?P<other>about(?:\s+(?:the\s+role|us|the\s+company))?|key\s+responsibilities|responsibilities|what\s+you(?:'ll|\s+will)\s+do|soft\s+skills|benefits|what\s+we\s+offer|compensation|who\s+you\s+are|overview)"
+        r")[ \t*#:_]*$",
+        re.IGNORECASE,
+    )
+
+    matches = list(header_pattern.finditer(jd_text))
+
+    # 2. If no line-level headers found, try inline boundary matching (for unformatted/inline JDs)
+    if not matches:
+        inline_pattern = re.compile(
+            r"(?:^|[.\n;]\s*)(?:"
+            r"(?P<must_have>must[\s-]have(?:\s+(?:skills?|requirements?|qualifications?))?|required(?:\s+(?:skills?|qualifications?|requirements?))?|core\s+skills?)"
+            r"|(?P<good_to_have>good[\s-]to[\s-]have(?:\s+(?:skills?|requirements?|qualifications?))?|nice[\s-]to[\s-]have(?:\s+(?:skills?|requirements?|qualifications?))?|preferred(?:\s+(?:skills?|qualifications?|requirements?))?|bonus(?:\s+skills?)?)"
+            r"|(?P<other>key\s+responsibilities|responsibilities|soft\s+skills)"
+            r")[:\s-]+",
+            re.IGNORECASE,
+        )
+        matches = list(inline_pattern.finditer(jd_text))
+
+    if not matches:
+        return {"must_have": jd_text.strip(), "good_to_have": "", "other": ""}
+
+    sections: dict[str, list[str]] = {"must_have": [], "good_to_have": [], "other": []}
+    if matches[0].start() > 0:
+        preamble = jd_text[:matches[0].start()].strip()
+        if preamble:
+            sections["other"].append(preamble)
+
+    for i, m in enumerate(matches):
+        category = m.lastgroup or "other"
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(jd_text)
+        chunk = jd_text[m.end():end].strip()
+        if chunk:
+            sections[category].append(chunk)
+
+    result = {k: "\n".join(v).strip() for k, v in sections.items()}
+    if not result["must_have"] and not result["good_to_have"]:
+        result["must_have"] = jd_text.strip()
+    return result
+
+
+def keyword_score(jd: str, resume: str) -> tuple[float, list[str], list[str], list[str]]:
+    sections = split_jd_sections(jd)
+    jd_must_concepts = concepts_in(sections["must_have"])
+    jd_good_concepts = concepts_in(sections["good_to_have"]) - jd_must_concepts
+    cv_concepts = concepts_in(resume)
+
+    # Fallback if no canonical concepts matched specific sections
+    if not jd_must_concepts and not jd_good_concepts:
+        jd_must_concepts = concepts_in(jd)
+
+    must_matches = jd_must_concepts & cv_concepts
+    good_matches = jd_good_concepts & cv_concepts
+    all_matched = sorted((jd_must_concepts | jd_good_concepts) & cv_concepts)
+
+    missing_must = sorted(jd_must_concepts - cv_concepts)
+    missing_good = sorted(jd_good_concepts - cv_concepts)
+
+    # Concept component: 70% must-have match ratio + 30% good-to-have match ratio
+    if jd_must_concepts and jd_good_concepts:
+        must_ratio = len(must_matches) / len(jd_must_concepts)
+        good_ratio = len(good_matches) / len(jd_good_concepts)
+        concept_part = 0.7 * must_ratio + 0.3 * good_ratio
+    elif jd_must_concepts:
+        concept_part = len(must_matches) / len(jd_must_concepts)
+    elif jd_good_concepts:
+        concept_part = len(good_matches) / len(jd_good_concepts)
+    else:
+        concept_part = 0.0
+
+    # 35% literal JD term overlap
     terms = set(jd_keywords(jd))
-    exact_matches = sorted(term for term in terms if re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", plain(resume)))
-    # 65% named/normalized technical concepts + 35% literal JD wording.
-    concept_part = len(concept_matches) / max(len(jd_concepts), 1)
+    resume_plain = plain(resume)
+    exact_matches = sorted(term for term in terms if re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", resume_plain))
     literal_part = len(exact_matches) / max(len(terms), 1)
-    return 100 * (0.65 * concept_part + 0.35 * literal_part), concept_matches, missing
+
+    score = 100 * (0.65 * concept_part + 0.35 * literal_part)
+    return round(score, 1), all_matched, missing_must, missing_good
 
 
-def semantic_scores(jd: str, resumes: list[str]) -> list[float]:
-    # Word + character n-grams capture contextual phrases and formatting variants,
-    # then cosine similarity measures meaning beyond exact whole-keyword overlap.
+_EMBEDDING_LOCK = threading.Lock()
+_EMBEDDING_MODEL = None
+_EMBEDDING_INITIALIZED = False
+_ACTIVE_ENGINE = "uninitialized"
+
+
+def get_embedding_model():
+    """Lazily load SentenceTransformer model with fallback to None on error."""
+    global _EMBEDDING_MODEL, _EMBEDDING_INITIALIZED, _ACTIVE_ENGINE
+    if _EMBEDDING_INITIALIZED:
+        return _EMBEDDING_MODEL
+    with _EMBEDDING_LOCK:
+        if _EMBEDDING_INITIALIZED:
+            return _EMBEDDING_MODEL
+        try:
+            from sentence_transformers import SentenceTransformer
+            _EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+            _ACTIVE_ENGINE = "all-MiniLM-L6-v2 (Dense Embeddings)"
+        except Exception as exc:
+            _EMBEDDING_MODEL = None
+            _ACTIVE_ENGINE = f"TF-IDF Fallback ({exc.__class__.__name__})"
+        _EMBEDDING_INITIALIZED = True
+        return _EMBEDDING_MODEL
+
+
+def get_semantic_engine_info() -> str:
+    get_embedding_model()
+    return _ACTIVE_ENGINE
+
+
+def tfidf_semantic_scores(jd: str, resumes: list[str]) -> list[float]:
+    """Fallback semantic scorer using word and character n-gram TF-IDF vectors."""
+    if not resumes:
+        return []
     corpus = [plain(jd)] + [plain(x) for x in resumes]
     try:
         vectorizer = TfidfVectorizer(ngram_range=(1, 2), analyzer="word", sublinear_tf=True, stop_words="english")
         matrix = vectorizer.fit_transform(corpus)
         word_scores = cosine_similarity(matrix[0:1], matrix[1:]).flatten()
-    except ValueError:  # Very short or punctuation-only input has no word vocabulary.
+    except ValueError:
         word_scores = [0.0] * len(resumes)
     try:
         char_vectorizer = TfidfVectorizer(ngram_range=(3, 5), analyzer="char_wb", sublinear_tf=True)
@@ -123,7 +243,32 @@ def semantic_scores(jd: str, resumes: list[str]) -> list[float]:
         char_scores = cosine_similarity(char_matrix[0:1], char_matrix[1:]).flatten()
     except ValueError:
         char_scores = [0.0] * len(resumes)
-    return [100 * (0.72 * word + 0.28 * char) for word, char in zip(word_scores, char_scores)]
+    return [round(float(100 * (0.72 * word + 0.28 * char)), 1) for word, char in zip(word_scores, char_scores)]
+
+
+def dense_semantic_scores(jd: str, resumes: list[str], model) -> list[float]:
+    """Compute dense contextual semantic similarity using pre-trained Sentence Transformer."""
+    if not resumes:
+        return []
+    jd_cleaned = plain(jd)
+    cv_cleaned = [plain(x) for x in resumes]
+    jd_emb = model.encode([jd_cleaned], normalize_embeddings=True)
+    cv_embs = model.encode(cv_cleaned, normalize_embeddings=True)
+    sims = cosine_similarity(jd_emb, cv_embs).flatten()
+    return [round(float(max(0.0, sim) * 100), 1) for sim in sims]
+
+
+def semantic_scores(jd: str, resumes: list[str]) -> list[float]:
+    """Compute semantic scores preferring dense embeddings with automated TF-IDF fallback."""
+    if not resumes:
+        return []
+    model = get_embedding_model()
+    if model is not None:
+        try:
+            return dense_semantic_scores(jd, resumes, model)
+        except Exception:
+            pass
+    return tfidf_semantic_scores(jd, resumes)
 
 
 def rank(jd: str, candidates: list[dict], semantic_weight: float = 0.55, required: set[str] | None = None) -> list[dict]:
@@ -133,12 +278,21 @@ def rank(jd: str, candidates: list[dict], semantic_weight: float = 0.55, require
     sem = semantic_scores(jd, [c["text"] for c in candidates])
     results = []
     for candidate, semantic in zip(candidates, sem):
-        keyword, matched, missing = keyword_score(jd, candidate["text"])
+        keyword, matched, missing_must, missing_good = keyword_score(jd, candidate["text"])
         # Explicit 55/45 hybrid weighting—both components are always retained.
         final = semantic_weight * semantic + keyword_weight * keyword
-        results.append({"name": candidate["name"], "score": round(final, 1), "semantic": round(semantic, 1),
-                        "keyword": round(keyword, 1), "matched": matched, "missing": missing,
-                        "required_missing": sorted(required - set(matched)), "text": candidate["text"]})
+        results.append({
+            "name": candidate["name"],
+            "score": round(final, 1),
+            "semantic": round(semantic, 1),
+            "keyword": round(keyword, 1),
+            "matched": matched,
+            "missing": sorted(set(missing_must + missing_good)),
+            "missing_must_have": missing_must,
+            "missing_good_to_have": missing_good,
+            "required_missing": sorted(required - set(matched)),
+            "text": candidate["text"],
+        })
     results.sort(key=lambda x: x["score"], reverse=True)
     for i, result in enumerate(results, 1):
         result["rank"] = i
@@ -190,7 +344,14 @@ def describe_experience(candidate: dict) -> str:
         details.append("mentions " + ", ".join(profile["roles"][:2]))
     if profile["actions"]:
         details.append("shows hands-on work through " + ", ".join(profile["actions"][:4]))
-    return "; ".join(details) if details else "does not make duration or delivery evidence explicit"
+    summary = "; ".join(details) if details else "does not make duration or delivery evidence explicit"
+    missing_must = candidate.get("missing_must_have", [])
+    missing_good = candidate.get("missing_good_to_have", [])
+    if missing_must:
+        summary += f" | CRITICAL MUST-HAVE GAP: lacks {', '.join(missing_must)}"
+    elif missing_good:
+        summary += f" | Preferred gap: missing good-to-have {', '.join(missing_good)}"
+    return summary
 
 
 @app.get("/")
@@ -201,7 +362,13 @@ def home():
 @app.post("/api/sample")
 def sample():
     jd, candidates = sample_data()
-    return jsonify({"jd": jd, "candidates": candidates, "results": rank(jd, candidates), "audit": audit_jd(jd)})
+    return jsonify({
+        "jd": jd,
+        "candidates": candidates,
+        "results": rank(jd, candidates),
+        "audit": audit_jd(jd),
+        "semantic_engine": get_semantic_engine_info(),
+    })
 
 
 @app.post("/api/rank")
@@ -239,9 +406,16 @@ def api_rank():
         semantic_weight = 0.55
     required = {plain(term) for term in request.form.get("required_skills", "").split(",") if plain(term)}
     known_required = {concept for concept in CONCEPTS if concept in required}
-    return jsonify({"jd": jd, "candidates": candidates, "results": rank(jd, candidates, semantic_weight, known_required),
-                    "audit": audit_jd(jd), "weights": {"semantic": round(semantic_weight * 100), "keyword": round((1 - semantic_weight) * 100)},
-                    "required": sorted(known_required), "duplicates_removed": duplicates_removed})
+    return jsonify({
+        "jd": jd,
+        "candidates": candidates,
+        "results": rank(jd, candidates, semantic_weight, known_required),
+        "audit": audit_jd(jd),
+        "weights": {"semantic": round(semantic_weight * 100), "keyword": round((1 - semantic_weight) * 100)},
+        "required": sorted(known_required),
+        "duplicates_removed": duplicates_removed,
+        "semantic_engine": get_semantic_engine_info(),
+    })
 
 
 @app.post("/api/compare")
@@ -252,9 +426,15 @@ def compare():
         return jsonify({"error": "Choose two candidates to compare."}), 400
     stronger = a if a["score"] >= b["score"] else b
     weaker = b if stronger is a else a
-    edge = sorted(set(stronger["matched"]) - set(weaker["matched"]))
-    weaker_edge = sorted(set(weaker["matched"]) - set(stronger["matched"]))
-    shared = sorted(set(stronger["matched"]) & set(weaker["matched"]))
+    edge = sorted(set(stronger.get("matched", [])) - set(weaker.get("matched", [])))
+    weaker_edge = sorted(set(weaker.get("matched", [])) - set(stronger.get("matched", [])))
+    shared = sorted(set(stronger.get("matched", [])) & set(weaker.get("matched", [])))
+
+    stronger_must = stronger.get("missing_must_have", [])
+    weaker_must = weaker.get("missing_must_have", [])
+    stronger_good = stronger.get("missing_good_to_have", [])
+    weaker_good = weaker.get("missing_good_to_have", [])
+
     skill_points = []
     if edge:
         skill_points.append(f"{stronger['name']} uniquely shows explicit evidence of: {', '.join(edge)}.")
@@ -264,6 +444,16 @@ def compare():
         skill_points.append(f"{weaker['name']} uniquely shows: {', '.join(weaker_edge)}.")
     if shared:
         skill_points.append(f"Both candidates demonstrate: {', '.join(shared)}.")
+
+    # Distinctly call out must-have gaps with highest priority
+    if weaker_must:
+        skill_points.append(f"CRITICAL MUST-HAVE GAP: {weaker['name']} lacks {', '.join(weaker_must)}.")
+    if stronger_must:
+        skill_points.append(f"MUST-HAVE GAP: {stronger['name']} lacks {', '.join(stronger_must)}.")
+    if weaker_good:
+        skill_points.append(f"Good-to-have gap: {weaker['name']} does not mention {', '.join(weaker_good)}.")
+    if stronger_good:
+        skill_points.append(f"Good-to-have gap: {stronger['name']} does not mention {', '.join(stronger_good)}.")
     return jsonify({
         "headline": f"{stronger['name']} ranks higher by {abs(stronger['score']-weaker['score']):.1f} points.",
         "skills": skill_points,
@@ -275,7 +465,7 @@ def compare():
             f"{stronger['name']}: semantic {stronger['semantic']}/100 · keyword {stronger['keyword']}/100.",
             f"{weaker['name']}: semantic {weaker['semantic']}/100 · keyword {weaker['keyword']}/100.",
         ],
-        "note": "The ranking combines relevant named skills with contextual similarity across the resume.",
+        "note": f"The ranking combines relevant named skills with contextual similarity via {get_semantic_engine_info()}.",
     })
 
 
