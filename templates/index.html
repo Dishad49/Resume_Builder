@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>InternLoom | Smart Shortlisting Engine</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<main>
+  <nav><div class="brand"><span>✦</span> InternLoom</div><div class="pill">Hybrid ranking engine</div></nav>
+  <section class="hero"><p class="eyebrow">RECRUITER WORKSPACE</p><h1>Find the signal<br>in every application.</h1><p>Explainable shortlisting that blends contextual relevance with the skills your role actually needs.</p></section>
+  <section id="setup" class="panel">
+    <div class="section-head"><div><p class="eyebrow">01 — INPUT</p><h2>Build your shortlist</h2></div><button id="sample" class="secondary">Try demo data</button></div>
+    <label for="jd">Job description</label><textarea id="jd" placeholder="Paste the job description here, or upload its PDF below..."></textarea>
+    <div class="file-row"><label class="drop"><input id="jdPdf" type="file" accept="application/pdf"><span>↑</span> Job description PDF <small>Optional</small></label><label class="drop"><input id="resumes" type="file" accept="application/pdf" multiple><span>↑</span> Resume PDFs <small>Upload 1–18 files</small></label></div>
+    <div id="fileStatus" class="file-status"></div><button id="rank" class="primary">Rank candidates <span>→</span></button><p id="error" class="error"></p>
+  </section>
+  <section id="results" hidden>
+    <div class="section-head"><div><p class="eyebrow">02 — RESULTS</p><h2>Ranked shortlist</h2></div><div class="legend"><i></i> Semantic context <b></b> Explicit skills</div></div>
+    <div id="top3" class="top3"></div>
+    <div id="audit" class="audit" hidden></div>
+    <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Candidate</th><th>Final fit</th><th>Score composition</th><th>Matched evidence</th></tr></thead><tbody id="ranking"></tbody></table></div>
+    <div class="method"><div><p class="eyebrow">AUDITABLE METHOD</p><h3>Every score can be defended.</h3></div><p><strong>55% semantic similarity</strong> — TF-IDF word/phrase and character n-gram cosine similarity handles contextual phrasing and minor formatting differences.<br><strong>45% keyword evidence</strong> — named JD concepts, normalized through a visible synonym map, plus literal JD terms. No LLM assigns scores.</p></div>
+    <div class="compare"><p class="eyebrow">RECRUITER QUESTION</p><h3>Why is one candidate above another?</h3><div><select id="candidateA"></select><select id="candidateB"></select><button id="compareBtn" class="secondary">Explain ranking</button></div><p id="comparison"></p></div>
+  </section>
+</main>
+<footer>InternLoom Smart Shortlisting Engine · Built for transparent campus hiring</footer>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body></html>
