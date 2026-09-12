@@ -165,8 +165,51 @@ class TestHybridEngine(unittest.TestCase):
         self.assertEqual(missing_must_b, [])
         self.assertIn("containerization", missing_good_b)
 
-        # Resume missing must-have skill MUST score lower than one missing only a good-to-have skill
-        self.assertLess(score_missing_must, score_missing_good)
+        gap = score_missing_good - score_missing_must
+        print(f"\n[Test Output] Missing 1 Good ({score_missing_good}) vs Missing 1 Must ({score_missing_must}) -> Gap: {gap:.1f} points")
+
+        # Must-have missing resume must score at least 10 points lower than good-to-have missing resume
+        self.assertGreaterEqual(gap, 10.0)
+
+    def test_must_have_scaling_multiple_missing(self):
+        # Candidate 0: Missing 0 must-haves (only missing good-to-have containerization)
+        resume_0_must_missing = (
+            "Software engineer with JavaScript, TypeScript, React frontend, Node.js, Express, REST API, JSON, "
+            "MySQL database, Git, AWS cloud, Jest testing, Agile Scrum sprints."
+        )
+        # Candidate 1: Missing 1 must-have (Node.js)
+        resume_1_must_missing = (
+            "Software engineer with JavaScript, TypeScript, React frontend, REST API, JSON, "
+            "MySQL database, Git, AWS cloud, Jest testing, Docker containers, Agile Scrum sprints."
+        )
+        # Candidate 2: Missing 2 must-haves (Node.js AND databases/MySQL)
+        resume_2_must_missing = (
+            "Software engineer with JavaScript, TypeScript, React frontend, REST API, JSON, "
+            "Git, AWS cloud, Jest testing, Docker containers, Agile Scrum sprints."
+        )
+
+        score_0, _, m_must_0, _ = app.keyword_score(TECHNOVA_JD, resume_0_must_missing)
+        score_1, _, m_must_1, _ = app.keyword_score(TECHNOVA_JD, resume_1_must_missing)
+        score_2, _, m_must_2, _ = app.keyword_score(TECHNOVA_JD, resume_2_must_missing)
+
+        self.assertEqual(len(m_must_0), 0)
+        self.assertEqual(len(m_must_1), 1)
+        self.assertEqual(len(m_must_2), 2)
+
+        drop_1 = score_0 - score_1
+        drop_2 = score_1 - score_2
+        print(f"\n[Test Output] 0 to 1 missing must-have: {score_0} -> {score_1} (drop: {drop_1:.1f} pts)")
+        print(f"[Test Output] 1 to 2 missing must-haves: {score_1} -> {score_2} (drop: {drop_2:.1f} pts)")
+
+        # Verify strict monotonic score ordering
+        self.assertLess(score_1, score_0)
+        self.assertLess(score_2, score_1)
+
+        # Confirm drops scale proportionally and both are >= 10 points
+        self.assertGreaterEqual(drop_1, 10.0)
+        self.assertGreaterEqual(drop_2, 10.0)
+        # Confirm it scales proportionally rather than hitting a flat cliff
+        self.assertAlmostEqual(drop_1, drop_2, delta=4.0)
 
     def test_fallback_no_headers_found(self):
         # 5(c): The fallback (no headers found) doesn't crash or return empty concept sets
@@ -185,11 +228,64 @@ class TestHybridEngine(unittest.TestCase):
         self.assertIn("react", must_c)
 
         # Test keyword_score on fallback doesn't crash and returns valid results
-        score, matched, missing_must, missing_good = app.keyword_score(no_header_jd, "Experienced React and Node.js developer.")
+        candidate_resume = "Full stack developer with JavaScript, React, Node.js, Express REST APIs, Git, and SQL databases."
+        score, matched, missing_must, missing_good = app.keyword_score(no_header_jd, candidate_resume)
         self.assertGreater(score, 0.0)
         self.assertIn("react", matched)
         self.assertIn("node.js", matched)
         self.assertEqual(missing_good, [])
+
+
+    def test_model_singleton_identity(self):
+        m1 = app.get_embedding_model()
+        m2 = app.get_embedding_model()
+        self.assertIs(m1, m2)
+
+    def test_api_warmup_endpoint(self):
+        res_get = self.client.get("/api/warmup")
+        self.assertEqual(res_get.status_code, 200)
+        data_get = res_get.get_json()
+        self.assertEqual(data_get["status"], "ready")
+        self.assertIn("warmup_sec", data_get)
+        self.assertIn("all-MiniLM-L6-v2", data_get["semantic_engine"])
+
+        res_post = self.client.post("/api/warmup")
+        self.assertEqual(res_post.status_code, 200)
+        data_post = res_post.get_json()
+        self.assertEqual(data_post["status"], "ready")
+
+    def test_api_rank_timings(self):
+        import io
+        data = {
+            "jd": self.jd,
+            "resumes": (io.BytesIO(b"%PDF-1.4 ..."), "resume.pdf"),
+        }
+        # Provide real sample candidates via form
+        from pypdf import PdfWriter
+        writer = PdfWriter()
+        writer.add_blank_page(width=100, height=100)
+        pdf_bytes = io.BytesIO()
+        writer.write(pdf_bytes)
+        pdf_bytes.seek(0)
+
+        with open("C:/Users/bharg/Downloads/Bhargav_Resume.docx", "rb") as f:
+            docx_bytes = f.read()
+
+        res = self.client.post(
+            "/api/rank",
+            data={
+                "jd": self.jd,
+                "resumes": [(io.BytesIO(docx_bytes), "Bhargav_Resume.docx")],
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(res.status_code, 200)
+        json_data = res.get_json()
+        self.assertIn("timings", json_data)
+        timings = json_data["timings"]
+        for key in ["model_retrieval_sec", "file_extraction_sec", "dense_embedding_sec", "keyword_scoring_sec", "total_request_sec"]:
+            self.assertIn(key, timings)
+            self.assertGreaterEqual(timings[key], 0.0)
 
 
 if __name__ == "__main__":

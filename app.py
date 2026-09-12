@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import time
 import zipfile
 import hashlib
 import threading
@@ -157,15 +158,23 @@ def split_jd_sections(jd_text: str) -> dict[str, str]:
     return result
 
 
-def keyword_score(jd: str, resume: str) -> tuple[float, list[str], list[str], list[str]]:
-    sections = split_jd_sections(jd)
-    jd_must_concepts = concepts_in(sections["must_have"])
-    jd_good_concepts = concepts_in(sections["good_to_have"]) - jd_must_concepts
-    cv_concepts = concepts_in(resume)
+# Tunable fixed penalty deducted per missing must-have concept.
+# Why a flat penalty in addition to ratio weighting:
+# Importance ratios (e.g. 0.85 / 0.15) alone get diluted across nested scoring stages:
+# the concept ratio is 65% of the keyword score, which in turn is only 45% of the overall hybrid score.
+# Under ratio weighting alone, a missing critical requirement only changes the final score by 2-3 points.
+# Adding a direct flat deduction guarantees high-visibility accountability for non-negotiable role requirements
+# in the final score, while good-to-have gaps only modulate the ratio without incurring this penalty.
+MUST_HAVE_GAP_PENALTY = 8.0
 
-    # Fallback if no canonical concepts matched specific sections
-    if not jd_must_concepts and not jd_good_concepts:
-        jd_must_concepts = concepts_in(jd)
+
+def score_candidate_keywords(
+    resume: str,
+    jd_must_concepts: set[str],
+    jd_good_concepts: set[str],
+    terms: set[str],
+) -> tuple[float, list[str], list[str], list[str]]:
+    cv_concepts = concepts_in(resume)
 
     must_matches = jd_must_concepts & cv_concepts
     good_matches = jd_good_concepts & cv_concepts
@@ -174,11 +183,11 @@ def keyword_score(jd: str, resume: str) -> tuple[float, list[str], list[str], li
     missing_must = sorted(jd_must_concepts - cv_concepts)
     missing_good = sorted(jd_good_concepts - cv_concepts)
 
-    # Concept component: 70% must-have match ratio + 30% good-to-have match ratio
+    # Concept component: 85% must-have match ratio + 15% good-to-have match ratio
     if jd_must_concepts and jd_good_concepts:
         must_ratio = len(must_matches) / len(jd_must_concepts)
         good_ratio = len(good_matches) / len(jd_good_concepts)
-        concept_part = 0.7 * must_ratio + 0.3 * good_ratio
+        concept_part = 0.85 * must_ratio + 0.15 * good_ratio
     elif jd_must_concepts:
         concept_part = len(must_matches) / len(jd_must_concepts)
     elif jd_good_concepts:
@@ -187,13 +196,27 @@ def keyword_score(jd: str, resume: str) -> tuple[float, list[str], list[str], li
         concept_part = 0.0
 
     # 35% literal JD term overlap
-    terms = set(jd_keywords(jd))
     resume_plain = plain(resume)
     exact_matches = sorted(term for term in terms if re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", resume_plain))
     literal_part = len(exact_matches) / max(len(terms), 1)
 
-    score = 100 * (0.65 * concept_part + 0.35 * literal_part)
-    return round(score, 1), all_matched, missing_must, missing_good
+    raw_score = 100 * (0.65 * concept_part + 0.35 * literal_part)
+
+    # Direct flat penalty for each missing must-have concept (good-to-have gaps do NOT trigger this penalty)
+    must_have_penalty = MUST_HAVE_GAP_PENALTY * len(missing_must)
+    final_score = max(0.0, raw_score - must_have_penalty)
+
+    return round(final_score, 1), all_matched, missing_must, missing_good
+
+
+def keyword_score(jd: str, resume: str) -> tuple[float, list[str], list[str], list[str]]:
+    sections = split_jd_sections(jd)
+    jd_must_concepts = concepts_in(sections["must_have"])
+    jd_good_concepts = concepts_in(sections["good_to_have"]) - jd_must_concepts
+    if not jd_must_concepts and not jd_good_concepts:
+        jd_must_concepts = concepts_in(jd)
+    terms = set(jd_keywords(jd))
+    return score_candidate_keywords(resume, jd_must_concepts, jd_good_concepts, terms)
 
 
 _EMBEDDING_LOCK = threading.Lock()
@@ -203,16 +226,22 @@ _ACTIVE_ENGINE = "uninitialized"
 
 
 def get_embedding_model():
-    """Lazily load SentenceTransformer model with fallback to None on error."""
+    """Lazily load SentenceTransformer model as a true singleton with fallback to None on error."""
     global _EMBEDDING_MODEL, _EMBEDDING_INITIALIZED, _ACTIVE_ENGINE
     if _EMBEDDING_INITIALIZED:
         return _EMBEDDING_MODEL
     with _EMBEDDING_LOCK:
         if _EMBEDDING_INITIALIZED:
             return _EMBEDDING_MODEL
+        print("[MODEL LOAD] Loading SentenceTransformer embedding model...", flush=True)
         try:
             from sentence_transformers import SentenceTransformer
-            _EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+            try:
+                # Fast path: Load from local cache to prevent remote HuggingFace Hub network checks
+                _EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True)
+            except Exception:
+                # Fallback: Download if not available in local cache
+                _EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
             _ACTIVE_ENGINE = "all-MiniLM-L6-v2 (Dense Embeddings)"
         except Exception as exc:
             _EMBEDDING_MODEL = None
@@ -247,13 +276,21 @@ def tfidf_semantic_scores(jd: str, resumes: list[str]) -> list[float]:
 
 
 def dense_semantic_scores(jd: str, resumes: list[str], model) -> list[float]:
-    """Compute dense contextual semantic similarity using pre-trained Sentence Transformer."""
+    """Compute dense contextual semantic similarity in a single batched Sentence Transformer call."""
     if not resumes:
         return []
     jd_cleaned = plain(jd)
     cv_cleaned = [plain(x) for x in resumes]
-    jd_emb = model.encode([jd_cleaned], normalize_embeddings=True)
-    cv_embs = model.encode(cv_cleaned, normalize_embeddings=True)
+    all_texts = [jd_cleaned] + cv_cleaned
+    # Single batched encode call for JD and all resumes combined
+    all_embs = model.encode(
+        all_texts,
+        batch_size=32,
+        show_progress_bar=False,
+        normalize_embeddings=True,
+    )
+    jd_emb = all_embs[0:1]
+    cv_embs = all_embs[1:]
     sims = cosine_similarity(jd_emb, cv_embs).flatten()
     return [round(float(max(0.0, sim) * 100), 1) for sim in sims]
 
@@ -271,14 +308,37 @@ def semantic_scores(jd: str, resumes: list[str]) -> list[float]:
     return tfidf_semantic_scores(jd, resumes)
 
 
-def rank(jd: str, candidates: list[dict], semantic_weight: float = 0.55, required: set[str] | None = None) -> list[dict]:
+def rank_with_timings(
+    jd: str,
+    candidates: list[dict],
+    semantic_weight: float = 0.55,
+    required: set[str] | None = None,
+) -> tuple[list[dict], dict[str, float]]:
     required = required or set()
     semantic_weight = min(max(semantic_weight, 0.0), 1.0)
     keyword_weight = 1 - semantic_weight
+
+    t_dense_start = time.perf_counter()
     sem = semantic_scores(jd, [c["text"] for c in candidates])
+    t_dense = time.perf_counter() - t_dense_start
+
+    t_kw_start = time.perf_counter()
+    # Pre-parse JD sections, concepts, and keywords ONCE across all candidates
+    sections = split_jd_sections(jd)
+    jd_must_concepts = concepts_in(sections["must_have"])
+    jd_good_concepts = concepts_in(sections["good_to_have"]) - jd_must_concepts
+    if not jd_must_concepts and not jd_good_concepts:
+        jd_must_concepts = concepts_in(jd)
+    terms = set(jd_keywords(jd))
+
     results = []
     for candidate, semantic in zip(candidates, sem):
-        keyword, matched, missing_must, missing_good = keyword_score(jd, candidate["text"])
+        keyword, matched, missing_must, missing_good = score_candidate_keywords(
+            candidate["text"],
+            jd_must_concepts,
+            jd_good_concepts,
+            terms,
+        )
         # Explicit 55/45 hybrid weighting—both components are always retained.
         final = semantic_weight * semantic + keyword_weight * keyword
         results.append({
@@ -296,6 +356,13 @@ def rank(jd: str, candidates: list[dict], semantic_weight: float = 0.55, require
     results.sort(key=lambda x: x["score"], reverse=True)
     for i, result in enumerate(results, 1):
         result["rank"] = i
+    t_kw = time.perf_counter() - t_kw_start
+
+    return results, {"dense_sec": t_dense, "keyword_sec": t_kw}
+
+
+def rank(jd: str, candidates: list[dict], semantic_weight: float = 0.55, required: set[str] | None = None) -> list[dict]:
+    results, _ = rank_with_timings(jd, candidates, semantic_weight, required)
     return results
 
 
@@ -373,6 +440,15 @@ def sample():
 
 @app.post("/api/rank")
 def api_rank():
+    t_start = time.perf_counter()
+
+    # 1. Model retrieval
+    t_model_start = time.perf_counter()
+    _ = get_embedding_model()
+    t_model = time.perf_counter() - t_model_start
+
+    # 2. Document extraction
+    t_extract_start = time.perf_counter()
     jd = request.form.get("jd", "").strip()
     if not jd and request.files.get("jd_pdf") and request.files["jd_pdf"].filename:
         try:
@@ -396,6 +472,8 @@ def api_rank():
             continue
         seen_resumes.add(fingerprint)
         candidates.append({"name": re.sub(r"\.(pdf|docx)$", "", file.filename, flags=re.I), "text": text})
+    t_extract = time.perf_counter() - t_extract_start
+
     if not jd:
         return jsonify({"error": "Add a job description or upload its PDF."}), 400
     if not candidates:
@@ -406,16 +484,56 @@ def api_rank():
         semantic_weight = 0.55
     required = {plain(term) for term in request.form.get("required_skills", "").split(",") if plain(term)}
     known_required = {concept for concept in CONCEPTS if concept in required}
+
+    results, engine_timings = rank_with_timings(jd, candidates, semantic_weight, known_required)
+
+    t_total = time.perf_counter() - t_start
+
+    timings = {
+        "model_retrieval_sec": round(t_model, 4),
+        "file_extraction_sec": round(t_extract, 4),
+        "dense_embedding_sec": round(engine_timings["dense_sec"], 4),
+        "keyword_scoring_sec": round(engine_timings["keyword_sec"], 4),
+        "total_request_sec": round(t_total, 4),
+    }
+
     return jsonify({
         "jd": jd,
         "candidates": candidates,
-        "results": rank(jd, candidates, semantic_weight, known_required),
+        "results": results,
         "audit": audit_jd(jd),
         "weights": {"semantic": round(semantic_weight * 100), "keyword": round((1 - semantic_weight) * 100)},
         "required": sorted(known_required),
         "duplicates_removed": duplicates_removed,
         "semantic_engine": get_semantic_engine_info(),
+        "timings": timings,
     })
+
+
+@app.route("/api/warmup", methods=["GET", "POST"])
+def api_warmup():
+    """Warmup endpoint to pre-load the model and warm up PyTorch/tokenizer threads."""
+    t0 = time.perf_counter()
+    model = get_embedding_model()
+    if model is not None:
+        try:
+            model.encode(["warmup probe sentence"], show_progress_bar=False, normalize_embeddings=True)
+        except Exception:
+            pass
+    warmup_sec = round(time.perf_counter() - t0, 4)
+    return jsonify({
+        "status": "ready",
+        "semantic_engine": get_semantic_engine_info(),
+        "warmup_sec": warmup_sec,
+    })
+
+
+def warmup_server():
+    """Hook to pre-load the embedding model at server launch."""
+    try:
+        get_embedding_model()
+    except Exception as exc:
+        print(f"[WARMUP ERROR] Preload failed: {exc}", flush=True)
 
 
 @app.post("/api/compare")
@@ -470,4 +588,6 @@ def compare():
 
 
 if __name__ == "__main__":
+    warmup_server()
     app.run(debug=True, port=5000)
+
