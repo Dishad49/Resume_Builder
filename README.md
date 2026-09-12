@@ -1,4 +1,4 @@
-# InternLoom Smart Shortlisting Engine
+# Talon Smart Shortlisting Engine
 
 An explainable resume-ranking web app built with a **Hybrid ML Architecture** that blends pre-trained dense embeddings with auditable rule-based concept matching.
 

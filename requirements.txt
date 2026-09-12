@@ -1,5 +1,5 @@
 # =====================================================================
-# InternLoom / ResumeRanker Dependencies
+# Talon / ResumeRanker Dependencies
 # =====================================================================
 
 # Core Web Framework

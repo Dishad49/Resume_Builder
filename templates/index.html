@@ -1,33 +1,108 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>InternLoom | Smart Shortlisting Engine</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Talon | Smart Shortlisting Engine</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
+
 <body>
-<main>
-  <nav><div class="brand"><span>✦</span> InternLoom</div><div class="pill">Hybrid ranking engine</div></nav>
-  <section class="hero"><p class="eyebrow">RECRUITER WORKSPACE</p><h1>Find the signal<br>in every application.</h1><p>Explainable shortlisting that blends contextual relevance with the skills your role actually needs.</p></section>
-  <section id="setup" class="panel">
-    <div class="section-head"><div><p class="eyebrow">01 — INPUT</p><h2>Build your shortlist</h2></div><button id="sample" class="secondary">Try demo data</button></div>
-    <label for="jd">Job description</label><textarea id="jd" placeholder="Paste the job description here, or upload its PDF below..."></textarea>
-    <div class="controls"><label>Semantic match <strong id="semanticValue">55%</strong><input id="semanticWeight" type="range" min="20" max="80" value="55"></label><label>Required skills <input id="requiredSkills" placeholder="react, databases, git"></label></div>
-    <div class="file-row"><label class="drop"><input id="jdPdf" type="file" accept="application/pdf,.docx"><span>↑</span> Job description file <small>PDF or DOCX</small></label><label class="drop"><input id="resumes" type="file" accept="application/pdf,.docx" multiple><span>↑</span> Resume files <small>PDF or DOCX · up to 25</small></label></div>
-    <div id="fileStatus" class="file-status" aria-live="polite"></div><ul id="resumeList" class="resume-list" aria-label="Selected resumes"></ul><button id="rank" class="primary">Rank candidates <span>→</span></button><p id="error" class="error"></p>
-  </section>
-  <section id="results" hidden>
-    <div class="section-head"><div><p class="eyebrow">02 — RESULTS</p><h2>Ranked shortlist</h2></div><div class="result-actions"><button id="export" class="secondary">Download CSV</button><div class="legend"><i></i> Semantic context <b></b> Explicit skills</div></div></div>
-    <div class="workflow"><button id="anonymous" class="secondary">Anonymous review: Off</button><div class="toolbar-control"><label for="filterCandidates">Filter</label><select id="filterCandidates"><option value="all">All candidates</option><option value="shortlisted">Shortlisted</option><option value="maybe">Maybe</option><option value="rejected">Rejected</option></select></div><div class="toolbar-control"><label for="sortCandidates">Sort</label><select id="sortCandidates"><option value="rank">Rank: best fit</option><option value="score-low">Score: low to high</option><option value="name">Candidate name: A–Z</option></select></div><button id="print" class="secondary">Print report</button></div>
-    <div id="summary" class="summary" aria-live="polite"></div>
-    <div id="top3" class="top3"></div>
-    <div id="audit" class="audit" hidden></div>
-    <section id="gaps" class="insights"></section>
-    <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Candidate</th><th>Final fit</th><th>Score composition</th><th>Matched evidence</th><th>Decision</th></tr></thead><tbody id="ranking"></tbody></table></div>
-    <div class="compare"><p class="eyebrow">RECRUITER QUESTION</p><h3>Why is one candidate above another?</h3><div><select id="candidateA"></select><select id="candidateB"></select><button id="compareBtn" class="secondary">Explain ranking</button></div><div id="comparison" class="comparison" aria-live="polite"></div></div>
-  </section>
-</main>
-<dialog id="candidateDialog"><button id="closeDialog" class="dialog-close" aria-label="Close">×</button><div id="candidateDetail"></div></dialog>
-<footer>InternLoom Smart Shortlisting Engine · Built for transparent campus hiring</footer>
-<script src="{{ url_for('static', filename='app.js') }}"></script>
-</body></html>
+  <main>
+    <nav>
+      <div class="brand"><span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
+            style="vertical-align:-3px;display:inline-block">
+            <path d="M4 4c2.5 5 4.5 9.5 7 16" />
+            <path d="M10 2.5c2 5.5 3.5 11 4 18.5" />
+            <path d="M16 3.5c1 5 1.8 10.5 1.5 17.5" />
+            <path d="M21 6c-1 4.5-1.8 9.5-2.5 14" />
+          </svg></span> Talon</div>
+      <div class="pill">Hybrid ranking engine</div>
+    </nav>
+    <section class="hero">
+      <p class="eyebrow">RECRUITER WORKSPACE</p>
+      <h1>Find the signal<br>in every application.</h1>
+      <p>Explainable shortlisting that blends contextual relevance with the skills your role actually needs.</p>
+    </section>
+    <section id="setup" class="panel">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">01 — INPUT</p>
+          <h2>Build your shortlist</h2>
+        </div><button id="sample" class="secondary">Try demo data</button>
+      </div>
+      <label for="jd">Job description</label><textarea id="jd"
+        placeholder="Paste the job description here, or upload its PDF below..."></textarea>
+      <div class="controls"><label>Semantic match <strong id="semanticValue">55%</strong><input id="semanticWeight"
+            type="range" min="20" max="80" value="55"></label><label>Required skills <input id="requiredSkills"
+            placeholder="react, databases, git"></label></div>
+      <div class="file-row"><label class="drop"><input id="jdPdf" type="file"
+            accept="application/pdf,.docx"><span>↑</span> Job description file <small>PDF or DOCX</small></label><label
+          class="drop"><input id="resumes" type="file" accept="application/pdf,.docx" multiple><span>↑</span> Resume
+          files <small>PDF or DOCX · up to 25</small></label></div>
+      <div id="fileStatus" class="file-status" aria-live="polite"></div>
+      <ul id="resumeList" class="resume-list" aria-label="Selected resumes"></ul><button id="rank" class="primary">Rank
+        candidates <span>→</span></button>
+      <p id="error" class="error"></p>
+    </section>
+    <section id="results" hidden>
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">02 — RESULTS</p>
+          <h2>Ranked shortlist</h2>
+        </div>
+        <div class="result-actions"><button id="export" class="secondary">Download CSV</button>
+          <div class="legend"><i></i> Semantic context <b></b> Explicit skills</div>
+        </div>
+      </div>
+      <div class="workflow"><button id="anonymous" class="secondary">Anonymous review: Off</button>
+        <div class="toolbar-control"><label for="filterCandidates">Filter</label><select id="filterCandidates">
+            <option value="all">All candidates</option>
+            <option value="shortlisted">Shortlisted</option>
+            <option value="maybe">Maybe</option>
+            <option value="rejected">Rejected</option>
+          </select></div>
+        <div class="toolbar-control"><label for="sortCandidates">Sort</label><select id="sortCandidates">
+            <option value="rank">Rank: best fit</option>
+            <option value="score-low">Score: low to high</option>
+            <option value="name">Candidate name: A–Z</option>
+          </select></div><button id="print" class="secondary">Print report</button>
+      </div>
+      <div id="summary" class="summary" aria-live="polite"></div>
+      <div id="top3" class="top3"></div>
+      <div id="audit" class="audit" hidden></div>
+      <section id="gaps" class="insights"></section>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Candidate</th>
+              <th>Final fit</th>
+              <th>Score composition</th>
+              <th>Matched evidence</th>
+              <th>Decision</th>
+            </tr>
+          </thead>
+          <tbody id="ranking"></tbody>
+        </table>
+      </div>
+      <div class="compare">
+        <p class="eyebrow">RECRUITER QUESTION</p>
+        <h3>Why is one candidate above another?</h3>
+        <div><select id="candidateA"></select><select id="candidateB"></select><button id="compareBtn"
+            class="secondary">Explain ranking</button></div>
+        <div id="comparison" class="comparison" aria-live="polite"></div>
+      </div>
+    </section>
+  </main>
+  <dialog id="candidateDialog"><button id="closeDialog" class="dialog-close" aria-label="Close">×</button>
+    <div id="candidateDetail"></div>
+  </dialog>
+  <footer>Talon Smart Shortlisting Engine · Built for transparent campus hiring</footer>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+
+</html>
