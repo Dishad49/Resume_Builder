@@ -287,6 +287,28 @@ class TestHybridEngine(unittest.TestCase):
             self.assertIn(key, timings)
             self.assertGreaterEqual(timings[key], 0.0)
 
+    def test_api_extract_jd(self):
+        import io
+        # Test without file
+        res = self.client.post("/api/extract-jd", data={})
+        self.assertEqual(res.status_code, 400)
+
+        # Test with valid docx
+        with open("C:/Users/bharg/Downloads/Bhargav_Resume.docx", "rb") as f:
+            docx_bytes = f.read()
+
+        res_docx = self.client.post(
+            "/api/extract-jd",
+            data={"jd_pdf": (io.BytesIO(docx_bytes), "sample_jd.docx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(res_docx.status_code, 200)
+        data = res_docx.get_json()
+        self.assertIn("text", data)
+        self.assertIn("filename", data)
+        self.assertEqual(data["filename"], "sample_jd.docx")
+        self.assertGreater(len(data["text"]), 20)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -510,6 +510,24 @@ def api_rank():
     })
 
 
+@app.post("/api/extract-jd")
+def api_extract_jd():
+    """Extract and return text from an uploaded job description file (PDF/DOCX)."""
+    file = request.files.get("jd_pdf") or request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"error": "No file selected."}), 400
+    try:
+        text = extract_document(file)
+        return jsonify({
+            "text": text,
+            "filename": file.filename,
+        })
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": f"Could not read {file.filename}: {str(exc)}"}), 400
+
+
 @app.route("/api/warmup", methods=["GET", "POST"])
 def api_warmup():
     """Warmup endpoint to pre-load the model and warm up PyTorch/tokenizer threads."""
