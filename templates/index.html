@@ -38,11 +38,22 @@
       <div class="controls"><label>Semantic match <strong id="semanticValue">55%</strong><input id="semanticWeight"
             type="range" min="20" max="80" value="55"></label><label>Required skills <input id="requiredSkills"
             placeholder="react, databases, git"></label></div>
-      <div class="file-row"><label class="drop"><input id="jdPdf" type="file"
-            accept="application/pdf,.docx"><span>↑</span> Job description file <small>PDF or DOCX</small></label><label
-          class="drop"><input id="resumes" type="file" accept="application/pdf,.docx" multiple><span>↑</span> Resume
-          files <small>PDF or DOCX · up to 25</small></label></div>
-      <div id="fileStatus" class="file-status" aria-live="polite"></div>
+      <div class="file-row">
+        <div>
+          <label for="jdPdf" class="drop" id="jdDrop">
+            <input id="jdPdf" type="file" accept="application/pdf,.docx">
+            <span>↑</span> <span id="jdLabelText">Job description file</span> <small>PDF or DOCX</small>
+          </label>
+          <div id="jdFileStatus" class="file-status" aria-live="polite"></div>
+        </div>
+        <div>
+          <label for="resumes" class="drop" id="resumesDrop">
+            <input id="resumes" type="file" accept="application/pdf,.docx" multiple>
+            <span>↑</span> <span>Resume files</span> <small>PDF or DOCX · up to 25</small>
+          </label>
+          <div id="fileStatus" class="file-status" aria-live="polite"></div>
+        </div>
+      </div>
       <ul id="resumeList" class="resume-list" aria-label="Selected resumes"></ul><button id="rank" class="primary">Rank
         candidates <span>→</span></button>
       <p id="error" class="error"></p>

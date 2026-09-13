@@ -1,16 +1,503 @@
-const $ = s => document.querySelector(s); let results = [], selectedResumes = [], decisions = {}, anonymous = false, activeEngine = ''; const MAX_RESUMES = 25;
-const esc = v => String(v).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); const name = (r, i) => anonymous ? `Candidate ${String(i + 1).padStart(2, '0')}` : r.name; const tags = (a, miss = false) => a?.length ? a.slice(0, 6).map(x => `<span class="tag ${miss === 'must' ? 'must-missing' : miss ? 'missing' : ''}">${esc(x)}</span>`).join('') : '<span class="muted">None</span>'; const status = n => decisions[n] || { status: 'undecided', note: '' };
-function files() { $('#fileStatus').textContent = selectedResumes.length ? `${selectedResumes.length} of 25 resumes ready to analyze` : 'No resumes selected yet.'; $('#resumeList').innerHTML = selectedResumes.map((f, i) => `<li><span>${esc(f.name)}</span><small>${Math.ceil(f.size / 1024)} KB</small><button class="remove-file" data-i="${i}">Remove</button></li>`).join('') }
-function gaps() { let c = {}; results.forEach(r => r.missing.forEach(x => c[x] = (c[x] || 0) + 1)); let x = Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 5); $('#gaps').innerHTML = x.length ? `<h3>Pool skill gaps</h3><p>Requirements least evidenced across the applicant pool.</p>${x.map(([k, v]) => `<span class="gap-tag">${esc(k)} <b>${v}/${results.length} missing</b></span>`).join('')}` : '' }
-function render() { let avg = results.reduce((t, r) => t + r.score, 0) / results.length; let eng = activeEngine ? `<span class="engine-tag">Engine: <strong>${esc(activeEngine)}</strong></span>` : ''; $('#summary').innerHTML = `<span><strong>${results.length}</strong> candidates ranked</span><span><strong>${avg.toFixed(1)}</strong> average fit</span>${eng}`; $('#top3').innerHTML = results.slice(0, 3).map((r, i) => { let mg = r.missing_must_have?.length ? `<strong>Missing Must-Have</strong>${tags(r.missing_must_have, 'must')}` : '', gg = r.missing_good_to_have?.length ? `<strong>Missing Good-To-Have</strong>${tags(r.missing_good_to_have, true)}` : '', lg = (!mg && !gg && r.missing?.length) ? `<strong>Missing evidence</strong>${tags(r.missing, true)}` : ''; return `<article class="winner"><div class="rank-badge">0${i + 1}</div><h3>${esc(name(r, i))}</h3><div class="score">${r.score}<small>/100</small></div><p><strong>Matched evidence</strong>${tags(r.matched)}${mg}${gg}${lg}</p></article>` }).join(''); $('#ranking').innerHTML = results.map((r, i) => { let d = status(r.name), req = r.required_missing?.length ? `<div class="required-warning">Missing required: ${esc(r.required_missing.join(', '))}</div>` : '', mreq = r.missing_must_have?.length ? `<div class="required-warning">Missing must-have: ${esc(r.missing_must_have.join(', '))}</div>` : ''; return `<tr data-status="${d.status}" data-required="${(r.required_missing?.length || r.missing_must_have?.length) ? 'missing' : 'clear'}"><td>${r.rank}</td><td><button class="candidate-link" data-i="${i}">${esc(name(r, i))}</button>${req}${mreq}</td><td><strong class="fit">${r.score}</strong></td><td>Semantic ${r.semantic}<br>Keyword ${r.keyword}</td><td>${tags(r.matched)}</td><td><select class="decision" data-n="${esc(r.name)}">${['undecided', 'shortlisted', 'maybe', 'rejected'].map(x => `<option ${d.status === x ? 'selected' : ''} value="${x}">${x}</option>`).join('')}</select></td></tr>` }).join(''); let o = results.map((r, i) => `<option value="${i}">${esc(name(r, i))}</option>`).join(''); $('#candidateA').innerHTML = o; $('#candidateB').innerHTML = o; if (results[1]) $('#candidateB').value = 1; gaps(); applyFilter() }
-function show(d) { results = d.results; activeEngine = d.semantic_engine || ''; decisions = {}; if (d.duplicates_removed?.length) $('#error').textContent = `Removed ${d.duplicates_removed.length} duplicate resume${d.duplicates_removed.length === 1 ? '' : 's'}: ${d.duplicates_removed.join(', ')}`; $('#results').hidden = false; render(); $('#results').scrollIntoView({ behavior: 'smooth' }) }
-$('#semanticWeight').oninput = e => $('#semanticValue').textContent = `${e.target.value}%`;
-$('#resumes').onchange = e => { let picked = [...e.target.files], add = picked.filter(f => !selectedResumes.some(x => x.name === f.name && x.size === f.size && x.lastModified === f.lastModified)), duplicates = picked.length - add.length; selectedResumes.push(...add.slice(0, 25 - selectedResumes.length)); e.target.value = ''; if (duplicates) $('#error').textContent = `Removed ${duplicates} duplicate file${duplicates === 1 ? '' : 's'} from your selection.`; files() }; $('#resumeList').onclick = e => { if (e.target.matches('.remove-file')) { selectedResumes.splice(+e.target.dataset.i, 1); files() } };
-$('#rank').onclick = async () => { let b = $('#rank'); b.disabled = true; try { let f = new FormData(); f.append('jd', $('#jd').value); f.append('semantic_weight', $('#semanticWeight').value); f.append('required_skills', $('#requiredSkills').value); if ($('#jdPdf').files[0]) f.append('jd_pdf', $('#jdPdf').files[0]); selectedResumes.forEach(x => f.append('resumes', x)); let q = await fetch('/api/rank', { method: 'POST', body: f }), d = await q.json(); if (!q.ok) throw Error(d.error); show(d) } catch (e) { $('#error').textContent = e.message } finally { b.disabled = false } };
-$('#sample').onclick = async () => { let d = await (await fetch('/api/sample', { method: 'POST' })).json(); $('#jd').value = d.jd; show(d) };
-$('#anonymous').onclick = () => { anonymous = !anonymous; $('#anonymous').textContent = `Anonymous review: ${anonymous ? 'On' : 'Off'}`; render() };
-function applyFilter() { let f = $('#filterCandidates').value; document.querySelectorAll('#ranking tr').forEach(row => row.hidden = f !== 'all' && row.dataset.status !== f) } $('#filterCandidates').onchange = applyFilter; $('#sortCandidates').onchange = e => { let mode = e.target.value; results.sort((a, b) => mode === 'score-low' ? a.score - b.score : mode === 'name' ? a.name.localeCompare(b.name) : a.rank - b.rank); render() };
-$('#ranking').onchange = e => { if (e.target.matches('.decision')) { decisions[e.target.dataset.n] = { ...status(e.target.dataset.n), status: e.target.value }; applyFilter() } }; $('#ranking').onclick = e => { let b = e.target.closest('.candidate-link'); if (!b) return; let r = results[+b.dataset.i], d = status(r.name), mg = r.missing_must_have?.length ? `<h3>Missing Must-Have Skills</h3>${tags(r.missing_must_have, 'must')}` : '', gg = r.missing_good_to_have?.length ? `<h3>Missing Good-To-Have Skills</h3>${tags(r.missing_good_to_have, true)}` : ''; $('#candidateDetail').innerHTML = `<p class="eyebrow">CANDIDATE PROFILE</p><h2>${esc(name(r, +b.dataset.i))}</h2><p class="detail-score">${r.score}/100 fit</p><h3>Matched skills</h3>${tags(r.matched)}${mg}${gg}<h3>Resume evidence</h3><blockquote>${esc(r.text.slice(0, 1200))}</blockquote><label>Recruiter note<textarea id="candidateNote">${esc(d.note)}</textarea></label><button id="saveNote" class="primary">Save note</button>`; $('#candidateDialog').showModal(); $('#saveNote').onclick = () => { decisions[r.name] = { ...status(r.name), note: $('#candidateNote').value }; $('#candidateDialog').close() } }; $('#closeDialog').onclick = () => $('#candidateDialog').close();
+const $ = s => document.querySelector(s);
+
+let results = [];
+let selectedResumes = [];
+let selectedJdFile = null;
+let decisions = {};
+let anonymous = false;
+let activeEngine = '';
+const MAX_RESUMES = 25;
+
+const esc = v =>
+    String(v).replace(
+        /[&<>'"]/g,
+        c =>
+        ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            "'": '&#39;',
+            '"': '&quot;'
+        }[c])
+    );
+
+const name = (r, i) =>
+    anonymous ? `Candidate ${String(i + 1).padStart(2, '0')}` : r.name;
+
+const tags = (a, miss = false) =>
+    a?.length
+        ? a
+            .slice(0, 6)
+            .map(
+                x =>
+                    `<span class="tag ${miss === 'must' ? 'must-missing' : miss ? 'missing' : ''
+                    }">${esc(x)}</span>`
+            )
+            .join('')
+        : '<span class="muted">None</span>';
+
+const status = n => decisions[n] || { status: 'undecided', note: '' };
+
+function files() {
+    $('#fileStatus').textContent = selectedResumes.length
+        ? `${selectedResumes.length} of 25 resumes ready to analyze`
+        : 'No resumes selected yet.';
+
+    $('#resumeList').innerHTML = selectedResumes
+        .map(
+            (f, i) =>
+                `<li><span>${esc(f.name)}</span><small>${Math.ceil(
+                    f.size / 1024
+                )} KB</small><button class="remove-file" data-i="${i}">Remove</button></li>`
+        )
+        .join('');
+}
+
+function gaps() {
+    let c = {};
+    results.forEach(r =>
+        r.missing.forEach(x => {
+            c[x] = (c[x] || 0) + 1;
+        })
+    );
+
+    let x = Object.entries(c)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+
+    $('#gaps').innerHTML = x.length
+        ? `<h3>Pool skill gaps</h3><p>Requirements least evidenced across the applicant pool.</p>${x
+            .map(
+                ([k, v]) =>
+                    `<span class="gap-tag">${esc(k)} <b>${v}/${results.length
+                    } missing</b></span>`
+            )
+            .join('')}`
+        : '';
+}
+
+function render() {
+    let avg = results.reduce((t, r) => t + r.score, 0) / results.length;
+    let eng = activeEngine
+        ? `<span class="engine-tag">Engine: <strong>${esc(
+            activeEngine
+        )}</strong></span>`
+        : '';
+
+    $('#summary').innerHTML = `<span><strong>${results.length
+        }</strong> candidates ranked</span><span><strong>${avg.toFixed(
+            1
+        )}</strong> average fit</span>${eng}`;
+
+    $('#top3').innerHTML = results
+        .slice(0, 3)
+        .map((r, i) => {
+            let mg = r.missing_must_have?.length
+                ? `<strong>Missing Must-Have</strong>${tags(
+                    r.missing_must_have,
+                    'must'
+                )}`
+                : '';
+            let gg = r.missing_good_to_have?.length
+                ? `<strong>Missing Good-To-Have</strong>${tags(
+                    r.missing_good_to_have,
+                    true
+                )}`
+                : '';
+            let lg =
+                !mg && !gg && r.missing?.length
+                    ? `<strong>Missing evidence</strong>${tags(r.missing, true)}`
+                    : '';
+
+            return `<article class="winner"><div class="rank-badge">0${i + 1
+                }</div><h3>${esc(name(r, i))}</h3><div class="score">${r.score
+                }<small>/100</small></div><p><strong>Matched evidence</strong>${tags(
+                    r.matched
+                )}${mg}${gg}${lg}</p></article>`;
+        })
+        .join('');
+
+    $('#ranking').innerHTML = results
+        .map((r, i) => {
+            let d = status(r.name);
+            let req = r.required_missing?.length
+                ? `<div class="required-warning">Missing required: ${esc(
+                    r.required_missing.join(', ')
+                )}</div>`
+                : '';
+            let mreq = r.missing_must_have?.length
+                ? `<div class="required-warning">Missing must-have: ${esc(
+                    r.missing_must_have.join(', ')
+                )}</div>`
+                : '';
+
+            return `<tr data-status="${d.status}" data-required="${r.required_missing?.length || r.missing_must_have?.length
+                    ? 'missing'
+                    : 'clear'
+                }"><td>${r.rank}</td><td><button class="candidate-link" data-i="${i}">${esc(
+                    name(r, i)
+                )}</button>${req}${mreq}</td><td><strong class="fit">${r.score
+                }</strong></td><td>Semantic ${r.semantic}<br>Keyword ${r.keyword
+                }</td><td>${tags(
+                    r.matched
+                )}</td><td><select class="decision" data-n="${esc(r.name)}">${[
+                    'undecided',
+                    'shortlisted',
+                    'maybe',
+                    'rejected'
+                ]
+                    .map(
+                        x => `<option ${d.status === x ? 'selected' : ''} value="${x}">${x}</option>`
+                    )
+                    .join('')}</select></td></tr>`;
+        })
+        .join('');
+
+    let o = results
+        .map((r, i) => `<option value="${i}">${esc(name(r, i))}</option>`)
+        .join('');
+    $('#candidateA').innerHTML = o;
+    $('#candidateB').innerHTML = o;
+    if (results[1]) $('#candidateB').value = 1;
+
+    gaps();
+    applyFilter();
+}
+
+function show(d) {
+    results = d.results;
+    activeEngine = d.semantic_engine || '';
+    decisions = {};
+
+    if (d.duplicates_removed?.length) {
+        $('#error').textContent = `Removed ${d.duplicates_removed.length
+            } duplicate resume${d.duplicates_removed.length === 1 ? '' : 's'
+            }: ${d.duplicates_removed.join(', ')}`;
+    }
+
+    $('#results').hidden = false;
+    render();
+    $('#results').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('#semanticWeight').oninput = e => {
+    $('#semanticValue').textContent = `${e.target.value}%`;
+};
+
+async function handleJdFile(file) {
+    if (!file) return;
+    const ext = file.name.toLowerCase().split('.').pop();
+    if (ext !== 'pdf' && ext !== 'docx') {
+        $('#error').textContent = `Unsupported file type for job description: ${file.name}. Only PDF and DOCX files are supported.`;
+        return;
+    }
+
+    selectedJdFile = file;
+    $('#error').textContent = '';
+    $('#jdFileStatus').innerHTML = `<span class="loading-status">Extracting text from <strong>${esc(file.name)}</strong>...</span>`;
+
+    try {
+        const fd = new FormData();
+        fd.append('jd_pdf', file);
+        const res = await fetch('/api/extract-jd', {
+            method: 'POST',
+            body: fd
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to extract text from file');
+
+        $('#jd').value = data.text;
+        $('#jdFileStatus').innerHTML = `
+      <div class="jd-file-badge">
+        <span>📄 <strong>${esc(file.name)}</strong></span>
+        <small>${Math.ceil(file.size / 1024)} KB</small>
+        <button type="button" class="remove-file" id="removeJdFile">Remove</button>
+      </div>
+    `;
+
+        $('#removeJdFile').onclick = () => {
+            selectedJdFile = null;
+            $('#jdPdf').value = '';
+            $('#jdFileStatus').innerHTML = '';
+            $('#jd').value = '';
+        };
+    } catch (err) {
+        $('#error').textContent = err.message;
+        $('#jdFileStatus').innerHTML = '';
+        selectedJdFile = null;
+        $('#jdPdf').value = '';
+    }
+}
+
+$('#jdPdf').onchange = e => {
+    if (e.target.files && e.target.files[0]) {
+        handleJdFile(e.target.files[0]);
+    }
+};
+
+function handleResumeFiles(picked) {
+    let add = picked.filter(
+        f =>
+            !selectedResumes.some(
+                x =>
+                    x.name === f.name &&
+                    x.size === f.size &&
+                    x.lastModified === f.lastModified
+            )
+    );
+    let duplicates = picked.length - add.length;
+
+    selectedResumes.push(...add.slice(0, 25 - selectedResumes.length));
+
+    if (duplicates) {
+        $('#error').textContent = `Removed ${duplicates} duplicate file${duplicates === 1 ? '' : 's'
+            } from your selection.`;
+    }
+
+    files();
+}
+
+$('#resumes').onchange = e => {
+    handleResumeFiles([...e.target.files]);
+    e.target.value = '';
+};
+
+function setupDragAndDrop() {
+    const jdDrop = $('#jdDrop');
+    const resumesDrop = $('#resumesDrop');
+
+    if (jdDrop) {
+        ['dragenter', 'dragover'].forEach(eventName => {
+            jdDrop.addEventListener(eventName, e => {
+                e.preventDefault();
+                e.stopPropagation();
+                jdDrop.classList.add('dragover');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            jdDrop.addEventListener(eventName, e => {
+                e.preventDefault();
+                e.stopPropagation();
+                jdDrop.classList.remove('dragover');
+            });
+        });
+
+        jdDrop.addEventListener('drop', e => {
+            const dt = e.dataTransfer;
+            if (dt && dt.files && dt.files[0]) {
+                handleJdFile(dt.files[0]);
+            }
+        });
+    }
+
+    if (resumesDrop) {
+        ['dragenter', 'dragover'].forEach(eventName => {
+            resumesDrop.addEventListener(eventName, e => {
+                e.preventDefault();
+                e.stopPropagation();
+                resumesDrop.classList.add('dragover');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            resumesDrop.addEventListener(eventName, e => {
+                e.preventDefault();
+                e.stopPropagation();
+                resumesDrop.classList.remove('dragover');
+            });
+        });
+
+        resumesDrop.addEventListener('drop', e => {
+            const dt = e.dataTransfer;
+            if (dt && dt.files && dt.files.length) {
+                handleResumeFiles([...dt.files]);
+            }
+        });
+    }
+}
+setupDragAndDrop();
+
+$('#resumeList').onclick = e => {
+    if (e.target.matches('.remove-file')) {
+        selectedResumes.splice(+e.target.dataset.i, 1);
+        files();
+    }
+};
+
+$('#rank').onclick = async () => {
+    let b = $('#rank');
+    b.disabled = true;
+
+    try {
+        let f = new FormData();
+        f.append('jd', $('#jd').value);
+        f.append('semantic_weight', $('#semanticWeight').value);
+        f.append('required_skills', $('#requiredSkills').value);
+        if (selectedJdFile) {
+            f.append('jd_pdf', selectedJdFile);
+        } else if ($('#jdPdf').files && $('#jdPdf').files[0]) {
+            f.append('jd_pdf', $('#jdPdf').files[0]);
+        }
+        selectedResumes.forEach(x => f.append('resumes', x));
+
+        let q = await fetch('/api/rank', { method: 'POST', body: f });
+        let d = await q.json();
+        if (!q.ok) throw Error(d.error);
+        show(d);
+    } catch (e) {
+        $('#error').textContent = e.message;
+    } finally {
+        b.disabled = false;
+    }
+};
+
+$('#sample').onclick = async () => {
+    let d = await (await fetch('/api/sample', { method: 'POST' })).json();
+    $('#jd').value = d.jd;
+    selectedJdFile = null;
+    $('#jdPdf').value = '';
+    $('#jdFileStatus').innerHTML = '';
+    show(d);
+};
+
+$('#anonymous').onclick = () => {
+    anonymous = !anonymous;
+    $('#anonymous').textContent = `Anonymous review: ${anonymous ? 'On' : 'Off'}`;
+    render();
+};
+
+function applyFilter() {
+    let f = $('#filterCandidates').value;
+    document.querySelectorAll('#ranking tr').forEach(row => {
+        row.hidden = f !== 'all' && row.dataset.status !== f;
+    });
+}
+
+$('#filterCandidates').onchange = applyFilter;
+
+$('#sortCandidates').onchange = e => {
+    let mode = e.target.value;
+    results.sort((a, b) =>
+        mode === 'score-low'
+            ? a.score - b.score
+            : mode === 'name'
+                ? a.name.localeCompare(b.name)
+                : a.rank - b.rank
+    );
+    render();
+};
+
+$('#ranking').onchange = e => {
+    if (e.target.matches('.decision')) {
+        decisions[e.target.dataset.n] = {
+            ...status(e.target.dataset.n),
+            status: e.target.value
+        };
+        applyFilter();
+    }
+};
+
+$('#ranking').onclick = e => {
+    let b = e.target.closest('.candidate-link');
+    if (!b) return;
+
+    let r = results[+b.dataset.i];
+    let d = status(r.name);
+    let mg = r.missing_must_have?.length
+        ? `<h3>Missing Must-Have Skills</h3>${tags(r.missing_must_have, 'must')}`
+        : '';
+    let gg = r.missing_good_to_have?.length
+        ? `<h3>Missing Good-To-Have Skills</h3>${tags(r.missing_good_to_have, true)}`
+        : '';
+
+    $('#candidateDetail').innerHTML = `<p class="eyebrow">CANDIDATE PROFILE</p><h2>${esc(
+        name(r, +b.dataset.i)
+    )}</h2><p class="detail-score">${r.score
+        }/100 fit</p><h3>Matched skills</h3>${tags(
+            r.matched
+        )}${mg}${gg}<h3>Resume evidence</h3><blockquote>${esc(
+            r.text.slice(0, 1200)
+        )}</blockquote><label>Recruiter note<textarea id="candidateNote">${esc(
+            d.note
+        )}</textarea></label><button id="saveNote" class="primary">Save note</button>`;
+
+    $('#candidateDialog').showModal();
+
+    $('#saveNote').onclick = () => {
+        decisions[r.name] = {
+            ...status(r.name),
+            note: $('#candidateNote').value
+        };
+        $('#candidateDialog').close();
+    };
+};
+
+$('#closeDialog').onclick = () => $('#candidateDialog').close();
+
 $('#print').onclick = () => print();
-$('#compareBtn').onclick = async () => { let q = await fetch('/api/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ a: results[$('#candidateA').value], b: results[$('#candidateB').value] }) }), d = await q.json(), card = (h, a) => `<section class="comparison-card"><h4>${h}</h4><ul>${a.map(x => `<li>${esc(x)}</li>`).join('')}</ul></section>`; $('#comparison').innerHTML = `<p class="comparison-headline">${esc(d.headline)}</p><div class="comparison-grid">${card('Skill coverage', d.skills)}${card('Experience evidence', d.experience)}${card('Score breakdown', d.scores)}</div>` };
-$('#export').onclick = () => { let q = x => `"${String(x).replace(/"/g, '""')}"`, rows = results.map(r => [r.rank, r.name, r.score, r.semantic, r.keyword, r.matched.join('; '), status(r.name).status, status(r.name).note]), a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([[['Rank', 'Candidate', 'Fit', 'Semantic', 'Keyword', 'Skills', 'Decision', 'Note'], ...rows].map(r => r.map(q).join(',')).join('\n')], { type: 'text/csv' })); a.download = 'Talon-shortlist.csv'; a.click() };
+
+$('#compareBtn').onclick = async () => {
+    let q = await fetch('/api/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            a: results[$('#candidateA').value],
+            b: results[$('#candidateB').value]
+        })
+    });
+    let d = await q.json();
+    let card = (h, a) =>
+        `<section class="comparison-card"><h4>${h}</h4><ul>${a
+            .map(x => `<li>${esc(x)}</li>`)
+            .join('')}</ul></section>`;
+
+    $('#comparison').innerHTML = `<p class="comparison-headline">${esc(
+        d.headline
+    )}</p><div class="comparison-grid">${card(
+        'Skill coverage',
+        d.skills
+    )}${card('Experience evidence', d.experience)}${card(
+        'Score breakdown',
+        d.scores
+    )}</div>`;
+};
+
+$('#export').onclick = () => {
+    let q = x => `"${String(x).replace(/"/g, '""')}"`;
+    let rows = results.map(r => [
+        r.rank,
+        r.name,
+        r.score,
+        r.semantic,
+        r.keyword,
+        r.matched.join('; '),
+        status(r.name).status,
+        status(r.name).note
+    ]);
+    let a = document.createElement('a');
+    a.href = URL.createObjectURL(
+        new Blob(
+            [
+                [
+                    [
+                        'Rank',
+                        'Candidate',
+                        'Fit',
+                        'Semantic',
+                        'Keyword',
+                        'Skills',
+                        'Decision',
+                        'Note'
+                    ],
+                    ...rows
+                ]
+                    .map(r => r.map(q).join(','))
+                    .join('\n')
+            ],
+            { type: 'text/csv' }
+        )
+    );
+    a.download = 'Talon-shortlist.csv';
+    a.click();
+};
